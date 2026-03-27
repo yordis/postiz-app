@@ -1,4 +1,4 @@
-import { TweetV2, TwitterApi } from 'twitter-api-v2';
+import { ApiResponseError, TweetV2, TwitterApi } from 'twitter-api-v2';
 import {
   AnalyticsData,
   AuthTokenDetails,
@@ -267,35 +267,62 @@ export class XProvider extends SocialAbstract implements SocialProvider {
       code
     );
 
-    const {
-      data: { username, verified, profile_image_url, name, id },
-    } = await client.v2.me({
-      'user.fields': [
-        'username',
-        'verified',
-        'verified_type',
-        'profile_image_url',
-        'name',
-      ],
-    });
+    const profile = await this.readOAuthUserProfile(client);
 
     return {
-      id: String(id),
+      id: profile.id,
       accessToken: accessToken + ':' + accessSecret,
-      name,
+      name: profile.name,
       refreshToken: '',
       expiresIn: 999999999,
-      picture: profile_image_url || '',
-      username,
+      picture: profile.profile_image_url || '',
+      username: profile.username,
       additionalSettings: [
         {
           title: 'Verified',
           description: 'Is this a verified user? (Premium)',
           type: 'checkbox' as const,
-          value: verified,
+          value: profile.verified,
         },
       ],
     };
+  }
+
+  /** v2 user lookup; on 403 (common for restricted X projects) fall back to v1.1. */
+  private async readOAuthUserProfile(client: TwitterApi) {
+    try {
+      const { data } = await client.v2.me({
+        'user.fields': [
+          'username',
+          'verified',
+          'verified_type',
+          'profile_image_url',
+          'name',
+        ],
+      });
+      return {
+        id: String(data.id),
+        name: data.name,
+        username: data.username,
+        verified: !!data.verified,
+        profile_image_url: data.profile_image_url,
+      };
+    } catch (err) {
+      if (!(err instanceof ApiResponseError) || err.code !== 403) {
+        throw err;
+      }
+      const u = await client.v1.verifyCredentials({
+        include_entities: false,
+        skip_status: true,
+      });
+      return {
+        id: String(u.id_str),
+        name: u.name,
+        username: u.screen_name,
+        verified: !!u.verified,
+        profile_image_url: u.profile_image_url_https,
+      };
+    }
   }
 
   private async getClient(accessToken: string) {
