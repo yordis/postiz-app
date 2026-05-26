@@ -185,9 +185,7 @@ export class XProvider extends SocialAbstract implements SocialProvider {
       accessSecret: accessSecretSplit,
     });
 
-    const {
-      data: { id },
-    } = await client.v2.me();
+    const { id } = await this.meIdentity(client);
 
     try {
       await client.v2.retweet(id, postId);
@@ -321,6 +319,23 @@ export class XProvider extends SocialAbstract implements SocialProvider {
         },
       ],
     };
+  }
+
+  /** v2 user lookup; on 403 (common for restricted X projects) fall back to v1.1. */
+  private async meIdentity(client: TwitterApi) {
+    try {
+      const { data } = await client.v2.me({ 'user.fields': 'username' });
+      return { id: String(data.id), username: data.username };
+    } catch (err) {
+      if (!(err instanceof ApiResponseError) || err.code !== 403) {
+        throw err;
+      }
+      const u = await client.v1.verifyCredentials({
+        include_entities: false,
+        skip_status: true,
+      });
+      return { id: String(u.id_str), username: u.screen_name };
+    }
   }
 
   /** v2 user lookup; on 403 (common for restricted X projects) fall back to v1.1. */
@@ -482,12 +497,8 @@ export class XProvider extends SocialAbstract implements SocialProvider {
   ): Promise<PostResponse[]> {
     const [accessTokenSplit, accessSecretSplit] = accessToken.split(':');
     const client = await this.getClient(accessToken);
-    const {
-      data: { username },
-    } = await this.runInConcurrent(async () =>
-      client.v2.me({
-        'user.fields': 'username',
-      })
+    const { username } = await this.runInConcurrent(async () =>
+      this.meIdentity(client)
     );
 
     const [firstPost] = postDetails;
@@ -562,12 +573,8 @@ export class XProvider extends SocialAbstract implements SocialProvider {
   ): Promise<PostResponse[]> {
     const [accessTokenSplit, accessSecretSplit] = accessToken.split(':');
     const client = await this.getClient(accessToken);
-    const {
-      data: { username },
-    } = await this.runInConcurrent(async () =>
-      client.v2.me({
-        'user.fields': 'username',
-      })
+    const { username } = await this.runInConcurrent(async () =>
+      this.meIdentity(client)
     );
 
     const [commentPost] = postDetails;
